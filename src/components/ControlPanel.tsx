@@ -21,7 +21,7 @@ import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import InfoIcon from '@mui/icons-material/Info';
 import useGameStore from '../store/gameStore';
-import type { Component, Server, Upgrade } from '../store/gameStore';
+import type { Component, Server } from '../store/gameStore';
 
 const formatMoney = (amount: number): string => {
   return new Intl.NumberFormat('en-US', {
@@ -69,7 +69,6 @@ export default function ControlPanel() {
     upgrades,
     powerUsage,
     powerCapacity,
-    purchaseComponent,
     startBuildingServer,
     purchaseUpgrade,
     shutdownServer,
@@ -108,12 +107,12 @@ export default function ControlPanel() {
   
   // Group components by type
   const componentsByType: Record<string, Component[]> = {};
-  availableComponents.forEach(component => {
+  for (const component of availableComponents) {
     if (!componentsByType[component.type]) {
       componentsByType[component.type] = [];
     }
     componentsByType[component.type].push(component);
-  });
+  }
 
   // Format game time
   const formatGameTime = (seconds: number): string => {

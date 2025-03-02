@@ -1,6 +1,6 @@
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, PerspectiveCamera, useTexture, Text, Environment } from '@react-three/drei';
-import { useRef, useState } from 'react';
+import { OrbitControls, PerspectiveCamera, Text, Environment } from '@react-three/drei';
+import { useRef, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import useGameStore from '../store/gameStore';
 import type { Server } from '../store/gameStore';
@@ -85,6 +85,12 @@ function ServerUnit({ server, position }: ServerUnitProps) {
   // Calculate server performance level (1-3) based on components
   const performanceLevel = Math.min(3, Math.ceil(server.revenue / 10));
   
+  // Generate unique IDs for status lights
+  const lightIds = useMemo(() => 
+    Array.from({ length: performanceLevel }).map((_, i) => `light-${server.id}-${i}`),
+    [server.id, performanceLevel]
+  );
+  
   return (
     <group position={position}>
       <mesh 
@@ -109,8 +115,8 @@ function ServerUnit({ server, position }: ServerUnitProps) {
       </mesh>
       
       {/* Status lights */}
-      {Array.from({ length: performanceLevel }).map((_, i) => (
-        <mesh key={`light-${server.id}-${i}`} position={[-0.7 + i * 0.3, 0, 0.43]}>
+      {lightIds.map((id, i) => (
+        <mesh key={id} position={[-0.7 + i * 0.3, 0, 0.43]}>
           <sphereGeometry args={[0.03, 16, 16]} />
           <meshStandardMaterial 
             color={server.status === 'running' ? '#00ff00' : '#ff0000'} 
@@ -138,25 +144,56 @@ function ServerUnit({ server, position }: ServerUnitProps) {
 }
 
 function Floor() {
-  const floorTexture = useTexture({
-    map: 'https://cdn.jsdelivr.net/gh/pmndrs/drei-assets@master/prototype/dark.png'
-  });
-  
-  // Make the texture repeat
-  if (floorTexture.map) {
-    floorTexture.map.wrapS = floorTexture.map.wrapT = THREE.RepeatWrapping;
-    floorTexture.map.repeat.set(50, 50);
-  }
+  // Create a simple grid texture for the floor
+  const gridSize = 100;
+  const gridTexture = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const context = canvas.getContext('2d');
+    if (context) {
+      context.fillStyle = '#111111';
+      context.fillRect(0, 0, 512, 512);
+      context.strokeStyle = '#222222';
+      context.lineWidth = 2;
+      
+      // Draw grid lines
+      const cellSize = 512 / 10;
+      for (let i = 0; i <= 10; i++) {
+        const pos = i * cellSize;
+        context.beginPath();
+        context.moveTo(0, pos);
+        context.lineTo(512, pos);
+        context.stroke();
+        
+        context.beginPath();
+        context.moveTo(pos, 0);
+        context.lineTo(pos, 512);
+        context.stroke();
+      }
+    }
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(gridSize / 10, gridSize / 10);
+    return texture;
+  }, []);
   
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -2.1, 0]} receiveShadow>
-      <planeGeometry args={[100, 100]} />
-      <meshStandardMaterial {...floorTexture} color="#111111" />
+      <planeGeometry args={[gridSize, gridSize]} />
+      <meshStandardMaterial map={gridTexture} />
     </mesh>
   );
 }
 
 function DatacenterRoom() {
+  // Create unique IDs for ceiling lights
+  const lightIds = useMemo(() => 
+    Array.from({ length: 6 }).map((_, i) => `ceiling-light-${i}-${Date.now()}`),
+    []
+  );
+  
   // Create walls for the datacenter
   return (
     <group>
@@ -185,19 +222,23 @@ function DatacenterRoom() {
       </mesh>
       
       {/* Ceiling lights */}
-      {Array.from({ length: 6 }).map((_, i) => (
-        <group key={`ceiling-light-${i}`} position={[(i % 3) * 10 - 10, 4.7, Math.floor(i / 3) * 10 - 10]}>
-          <mesh>
-            <boxGeometry args={[3, 0.2, 3]} />
-            <meshStandardMaterial color="#333333" />
-          </mesh>
-          <mesh position={[0, -0.1, 0]}>
-            <boxGeometry args={[2.8, 0.1, 2.8]} />
-            <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={1} />
-          </mesh>
-          <pointLight position={[0, -1, 0]} intensity={5} distance={15} decay={2} />
-        </group>
-      ))}
+      {lightIds.map((id, i) => {
+        const x = (i % 3) * 10 - 10;
+        const z = Math.floor(i / 3) * 10 - 10;
+        return (
+          <group key={id} position={[x, 4.7, z]}>
+            <mesh>
+              <boxGeometry args={[3, 0.2, 3]} />
+              <meshStandardMaterial color="#333333" />
+            </mesh>
+            <mesh position={[0, -0.1, 0]}>
+              <boxGeometry args={[2.8, 0.1, 2.8]} />
+              <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={1} />
+            </mesh>
+            <pointLight position={[0, -1, 0]} intensity={5} distance={15} decay={2} />
+          </group>
+        );
+      })}
     </group>
   );
 }
@@ -212,6 +253,12 @@ export default function DatacenterScene() {
   for (let i = 0; i < servers.length; i += serversPerRack) {
     serverRacks.push(servers.slice(i, i + serversPerRack));
   }
+  
+  // Generate unique IDs for server racks
+  const rackIds = useMemo(() => 
+    Array.from({ length: Math.max(1, serverRacks.length) }).map((_, i) => `rack-${i}-${Date.now()}`),
+    [serverRacks.length]
+  );
 
   return (
     <Canvas shadows style={{ width: '100%', height: '100vh' }}>
@@ -243,7 +290,7 @@ export default function DatacenterScene() {
         
         return (
           <ServerRack
-            key={`rack-${rackIndex}`}
+            key={rackIds[rackIndex]}
             position={[x, 0, z]}
             servers={rackServers}
           />
