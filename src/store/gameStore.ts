@@ -14,6 +14,19 @@ export interface Component {
 
 export type ServerStatus = 'building' | 'running' | 'offline';
 
+export type RoomType = 'SERVER' | 'PC' | 'SOFTWARE';
+
+export interface Room {
+  id: string;
+  type: RoomType;
+  name: string;
+  position: [number, number];
+  size: number;
+  cost: number;
+  maxUnits: number;
+  units: (Server | PC | Software)[];
+}
+
 export interface Server {
   id: string;
   components: Component[];
@@ -22,6 +35,29 @@ export interface Server {
   revenue: number;
   powerUsage: number;
   efficiency: number;
+}
+
+export interface PC {
+  id: string;
+  components: Component[];
+  status: ServerStatus;
+  buildStartTime?: number;
+  revenue: number;
+  powerUsage: number;
+  efficiency: number;
+  userSatisfaction: number; // 0-100
+}
+
+export interface Software {
+  id: string;
+  name: string;
+  type: 'OS' | 'PRODUCTIVITY' | 'SECURITY' | 'DEVELOPMENT';
+  status: ServerStatus;
+  buildStartTime?: number;
+  developmentProgress: number; // 0-100
+  revenue: number;
+  powerUsage: number;
+  developers: number;
 }
 
 export interface Upgrade {
@@ -39,6 +75,9 @@ export interface Upgrade {
 interface GameState {
   money: number;
   servers: Server[];
+  pcs: PC[];
+  software: Software[];
+  rooms: Room[];
   availableComponents: Component[];
   upgrades: Upgrade[];
   powerCapacity: number;
@@ -48,16 +87,67 @@ interface GameState {
   powerEfficiencyMultiplier: number;
   lastUpdate: number;
   gameTime: number; // in seconds
+  activeRoomId: string | null;
   
   // Actions
   addMoney: (amount: number) => void;
   purchaseComponent: (component: Component) => boolean;
   startBuildingServer: (components: Component[]) => void;
+  startBuildingPC: (components: Component[]) => void;
+  startDevelopingSoftware: (name: string, type: Software['type'], developers: number) => void;
   purchaseUpgrade: (upgradeId: string) => boolean;
   updateGameState: () => void;
   shutdownServer: (serverId: string) => void;
   restartServer: (serverId: string) => void;
+  purchaseRoom: (type: RoomType, position: [number, number]) => boolean;
+  setActiveRoom: (roomId: string | null) => void;
 }
+
+// Define room types
+const roomTypes: Record<RoomType, { name: string, cost: number, maxUnits: number, size: number }> = {
+  SERVER: { 
+    name: 'Server Room', 
+    cost: 5000, 
+    maxUnits: 20,
+    size: 3
+  },
+  PC: { 
+    name: 'PC Lab', 
+    cost: 3000, 
+    maxUnits: 10,
+    size: 2
+  },
+  SOFTWARE: { 
+    name: 'Development Studio', 
+    cost: 7000, 
+    maxUnits: 5,
+    size: 4
+  }
+};
+
+// Define software types
+const softwareTypes: Record<Software['type'], { baseCost: number, baseRevenue: number, developmentTime: number }> = {
+  OS: {
+    baseCost: 5000,
+    baseRevenue: 50,
+    developmentTime: 300 // seconds
+  },
+  PRODUCTIVITY: {
+    baseCost: 2000,
+    baseRevenue: 20,
+    developmentTime: 180
+  },
+  SECURITY: {
+    baseCost: 3000,
+    baseRevenue: 30,
+    developmentTime: 240
+  },
+  DEVELOPMENT: {
+    baseCost: 4000,
+    baseRevenue: 40,
+    developmentTime: 270
+  }
+};
 
 // Define component catalog
 const componentCatalog: Component[] = [
@@ -365,17 +455,32 @@ const upgradeCatalog: Upgrade[] = [
 ];
 
 const useGameStore = create<GameState>((set, get) => ({
-  money: 2000, // Starting money
+  money: 10000, // Starting money
   servers: [],
+  pcs: [],
+  software: [],
+  rooms: [
+    {
+      id: 'room-1',
+      type: 'SERVER',
+      name: 'Server Room 1',
+      position: [0, 0],
+      size: roomTypes.SERVER.size,
+      cost: roomTypes.SERVER.cost,
+      maxUnits: roomTypes.SERVER.maxUnits,
+      units: []
+    }
+  ],
   availableComponents: componentCatalog.filter(comp => comp.tier === 1), // Start with tier 1 components
   upgrades: upgradeCatalog,
-  powerCapacity: 1000,
+  powerCapacity: 2000,
   powerUsage: 0,
   buildSpeedMultiplier: 1,
   revenueMultiplier: 1,
   powerEfficiencyMultiplier: 1,
   lastUpdate: Date.now(),
   gameTime: 0,
+  activeRoomId: 'room-1',
 
   addMoney: (amount) => set((state) => ({ money: state.money + amount })),
 
@@ -406,9 +511,120 @@ const useGameStore = create<GameState>((set, get) => ({
       efficiency: powerEfficiency,
     };
     
+    // Add server to active room if it's a server room
+    if (state.activeRoomId) {
+      const activeRoom = state.rooms.find(r => r.id === state.activeRoomId);
+      if (activeRoom && activeRoom.type === 'SERVER' && activeRoom.units.length < activeRoom.maxUnits) {
+        set((state) => ({
+          rooms: state.rooms.map(room => 
+            room.id === state.activeRoomId 
+              ? { ...room, units: [...room.units, newServer] } 
+              : room
+          ),
+          servers: [...state.servers, newServer]
+        }));
+        return;
+      }
+    }
+    
+    // If no active room or room is full, just add to servers array
     set((state) => ({
       servers: [...state.servers, newServer]
     }));
+  },
+
+  startBuildingPC: (components) => {
+    const state = get();
+    
+    // Calculate total power usage (considering PSU efficiency)
+    const psu = components.find(c => c.type === 'PSU');
+    const basePowerUsage = components.reduce((sum, comp) => sum + comp.powerUsage, 0);
+    const powerEfficiency = psu ? Math.abs(psu.powerUsage) / 100 : 0;
+    
+    // Calculate user satisfaction based on component quality
+    const totalPerformance = components.reduce((sum, comp) => sum + comp.performance, 0);
+    const userSatisfaction = Math.min(100, totalPerformance / 2);
+    
+    const newPC: PC = {
+      id: `pc-${Date.now()}`,
+      components,
+      status: 'building',
+      buildStartTime: Date.now(),
+      revenue: components.reduce((sum, comp) => sum + comp.performance, 0) * 0.05 * state.revenueMultiplier,
+      powerUsage: basePowerUsage * (1 - (powerEfficiency + state.powerEfficiencyMultiplier - 1)),
+      efficiency: powerEfficiency,
+      userSatisfaction
+    };
+    
+    // Add PC to active room if it's a PC room
+    if (state.activeRoomId) {
+      const activeRoom = state.rooms.find(r => r.id === state.activeRoomId);
+      if (activeRoom && activeRoom.type === 'PC' && activeRoom.units.length < activeRoom.maxUnits) {
+        set((state) => ({
+          rooms: state.rooms.map(room => 
+            room.id === state.activeRoomId 
+              ? { ...room, units: [...room.units, newPC] } 
+              : room
+          ),
+          pcs: [...state.pcs, newPC]
+        }));
+        return;
+      }
+    }
+    
+    // If no active room or room is full, just add to PCs array
+    set((state) => ({
+      pcs: [...state.pcs, newPC]
+    }));
+  },
+
+  startDevelopingSoftware: (name, type, developers) => {
+    const state = get();
+    const softwareTypeInfo = softwareTypes[type];
+    
+    // Calculate cost based on developers
+    const cost = softwareTypeInfo.baseCost * developers;
+    
+    if (state.money < cost) {
+      return false;
+    }
+    
+    const newSoftware: Software = {
+      id: `software-${Date.now()}`,
+      name,
+      type,
+      status: 'building',
+      buildStartTime: Date.now(),
+      developmentProgress: 0,
+      revenue: softwareTypeInfo.baseRevenue * developers * state.revenueMultiplier,
+      powerUsage: 50 * developers,
+      developers
+    };
+    
+    // Add software to active room if it's a software room
+    if (state.activeRoomId) {
+      const activeRoom = state.rooms.find(r => r.id === state.activeRoomId);
+      if (activeRoom && activeRoom.type === 'SOFTWARE' && activeRoom.units.length < activeRoom.maxUnits) {
+        set((state) => ({
+          rooms: state.rooms.map(room => 
+            room.id === state.activeRoomId 
+              ? { ...room, units: [...room.units, newSoftware] } 
+              : room
+          ),
+          software: [...state.software, newSoftware],
+          money: state.money - cost
+        }));
+        return true;
+      }
+    }
+    
+    // If no active room or room is full, just add to software array
+    set((state) => ({
+      software: [...state.software, newSoftware],
+      money: state.money - cost
+    }));
+    
+    return true;
   },
 
   purchaseUpgrade: (upgradeId) => {
@@ -466,7 +682,15 @@ const useGameStore = create<GameState>((set, get) => ({
     set((state) => ({
       servers: state.servers.map(server => 
         server.id === serverId ? { ...server, status: 'offline' as ServerStatus } : server
-      )
+      ),
+      rooms: state.rooms.map(room => ({
+        ...room,
+        units: room.units.map(unit => 
+          'components' in unit && unit.id === serverId 
+            ? { ...unit, status: 'offline' as ServerStatus } 
+            : unit
+        )
+      }))
     }));
   },
 
@@ -474,8 +698,48 @@ const useGameStore = create<GameState>((set, get) => ({
     set((state) => ({
       servers: state.servers.map(server => 
         server.id === serverId ? { ...server, status: 'running' as ServerStatus } : server
-      )
+      ),
+      rooms: state.rooms.map(room => ({
+        ...room,
+        units: room.units.map(unit => 
+          'components' in unit && unit.id === serverId 
+            ? { ...unit, status: 'running' as ServerStatus } 
+            : unit
+        )
+      }))
     }));
+  },
+
+  purchaseRoom: (type, position) => {
+    const state = get();
+    const roomInfo = roomTypes[type];
+    
+    if (state.money >= roomInfo.cost) {
+      const newRoom: Room = {
+        id: `room-${type.toLowerCase()}-${Date.now()}`,
+        type,
+        name: `${roomInfo.name} ${state.rooms.filter(r => r.type === type).length + 1}`,
+        position,
+        size: roomInfo.size,
+        cost: roomInfo.cost,
+        maxUnits: roomInfo.maxUnits,
+        units: []
+      };
+      
+      set((state) => ({
+        rooms: [...state.rooms, newRoom],
+        money: state.money - roomInfo.cost,
+        activeRoomId: newRoom.id
+      }));
+      
+      return true;
+    }
+    
+    return false;
+  },
+
+  setActiveRoom: (roomId) => {
+    set({ activeRoomId: roomId });
   },
 
   updateGameState: () => {
@@ -486,57 +750,152 @@ const useGameStore = create<GameState>((set, get) => ({
     // Update game time
     const newGameTime = state.gameTime + timeDelta;
     
-    // Update servers status and collect revenue
-    const updatedServers = state.servers.map(server => {
-      if (server.status === 'building') {
-        const buildTime = server.components.reduce((sum, comp) => sum + comp.buildTime, 0) * 
-          (1 - (state.buildSpeedMultiplier - 1)) * 1000; // Convert to milliseconds
-        
-        if (currentTime - (server.buildStartTime || 0) >= buildTime) {
-          return { ...server, status: 'running' as ServerStatus };
+    // Update all units in all rooms
+    const updatedRooms = state.rooms.map(room => {
+      const updatedUnits = room.units.map(unit => {
+        // Handle servers and PCs
+        if ('components' in unit) {
+          if (unit.status === 'building') {
+            const buildTime = unit.components.reduce((sum, comp) => sum + comp.buildTime, 0) * 
+              (1 - (state.buildSpeedMultiplier - 1)) * 1000; // Convert to milliseconds
+            
+            if (currentTime - (unit.buildStartTime || 0) >= buildTime) {
+              return { ...unit, status: 'running' as ServerStatus };
+            }
+          }
+          return unit;
+        } 
+        // Handle software
+        else if ('developmentProgress' in unit) {
+          if (unit.status === 'building') {
+            const softwareTypeInfo = softwareTypes[unit.type];
+            const developmentTime = softwareTypeInfo.developmentTime * (1 - (state.buildSpeedMultiplier - 1));
+            const progressIncrement = (timeDelta / developmentTime) * 100;
+            
+            const newProgress = unit.developmentProgress + progressIncrement;
+            
+            if (newProgress >= 100) {
+              return { ...unit, developmentProgress: 100, status: 'running' as ServerStatus };
+            }
+            
+            return { ...unit, developmentProgress: newProgress };
+          }
+          return unit;
         }
-      }
-      return server;
+        
+        return unit;
+      });
+      
+      return { ...room, units: updatedUnits };
     });
-
-    // Calculate revenue from running servers
-    const revenue = updatedServers
+    
+    // Update servers, PCs, and software arrays to match room units
+    const allServers: Server[] = [];
+    const allPCs: PC[] = [];
+    const allSoftware: Software[] = [];
+    
+    updatedRooms.forEach(room => {
+      room.units.forEach(unit => {
+        if ('components' in unit) {
+          if ('userSatisfaction' in unit) {
+            allPCs.push(unit as PC);
+          } else {
+            allServers.push(unit as Server);
+          }
+        } else if ('developmentProgress' in unit) {
+          allSoftware.push(unit as Software);
+        }
+      });
+    });
+    
+    // Calculate revenue from all running units
+    const serverRevenue = allServers
       .filter(server => server.status === 'running')
       .reduce((sum, server) => sum + server.revenue * timeDelta, 0);
+    
+    const pcRevenue = allPCs
+      .filter(pc => pc.status === 'running')
+      .reduce((sum, pc) => sum + pc.revenue * timeDelta, 0);
+    
+    const softwareRevenue = allSoftware
+      .filter(sw => sw.status === 'running')
+      .reduce((sum, sw) => sum + sw.revenue * timeDelta, 0);
+    
+    const totalRevenue = serverRevenue + pcRevenue + softwareRevenue;
 
     // Update power usage
-    const newPowerUsage = updatedServers
+    const serverPower = allServers
       .filter(server => server.status === 'running')
       .reduce((sum, server) => sum + server.powerUsage, 0);
+    
+    const pcPower = allPCs
+      .filter(pc => pc.status === 'running')
+      .reduce((sum, pc) => sum + pc.powerUsage, 0);
+    
+    const softwarePower = allSoftware
+      .filter(sw => sw.status === 'running')
+      .reduce((sum, sw) => sum + sw.powerUsage, 0);
+    
+    const totalPowerUsage = serverPower + pcPower + softwarePower;
 
-    // Check if power usage exceeds capacity and shut down servers if needed
-    let finalServers = [...updatedServers];
-    if (newPowerUsage > state.powerCapacity) {
-      // Sort servers by efficiency (revenue per watt) and shut down least efficient ones
-      const runningServers = finalServers
-        .filter(s => s.status === 'running')
-        .sort((a, b) => (a.revenue / a.powerUsage) - (b.revenue / b.powerUsage));
+    // Check if power usage exceeds capacity and shut down units if needed
+    if (totalPowerUsage > state.powerCapacity) {
+      // Sort all units by efficiency (revenue per watt) and shut down least efficient ones
+      const allRunningUnits = [
+        ...allServers.filter(s => s.status === 'running').map(s => ({ ...s, type: 'server' as const })),
+        ...allPCs.filter(p => p.status === 'running').map(p => ({ ...p, type: 'pc' as const })),
+        ...allSoftware.filter(sw => sw.status === 'running').map(sw => ({ ...sw, type: 'software' as const }))
+      ].sort((a, b) => (a.revenue / a.powerUsage) - (b.revenue / b.powerUsage));
       
-      let currentPowerUsage = newPowerUsage;
+      let currentPowerUsage = totalPowerUsage;
       let i = 0;
       
-      // Shut down servers until power usage is below capacity
-      while (currentPowerUsage > state.powerCapacity && i < runningServers.length) {
-        const serverToShutdown = runningServers[i];
-        currentPowerUsage -= serverToShutdown.powerUsage;
+      // Shut down units until power usage is below capacity
+      while (currentPowerUsage > state.powerCapacity && i < allRunningUnits.length) {
+        const unitToShutdown = allRunningUnits[i];
+        currentPowerUsage -= unitToShutdown.powerUsage;
         
-        finalServers = finalServers.map(s => 
-          s.id === serverToShutdown.id ? { ...s, status: 'offline' as ServerStatus } : s
-        );
+        // Mark unit for shutdown
+        if (unitToShutdown.type === 'server') {
+          allServers.forEach(s => {
+            if (s.id === unitToShutdown.id) {
+              s.status = 'offline';
+            }
+          });
+        } else if (unitToShutdown.type === 'pc') {
+          allPCs.forEach(p => {
+            if (p.id === unitToShutdown.id) {
+              p.status = 'offline';
+            }
+          });
+        } else if (unitToShutdown.type === 'software') {
+          allSoftware.forEach(sw => {
+            if (sw.id === unitToShutdown.id) {
+              sw.status = 'offline';
+            }
+          });
+        }
+        
+        // Also update in rooms
+        updatedRooms.forEach(room => {
+          room.units.forEach(unit => {
+            if ('id' in unit && unit.id === unitToShutdown.id) {
+              unit.status = 'offline';
+            }
+          });
+        });
         
         i++;
       }
     }
 
     set({
-      servers: finalServers,
-      money: state.money + revenue,
-      powerUsage: Math.min(newPowerUsage, state.powerCapacity),
+      rooms: updatedRooms,
+      servers: allServers,
+      pcs: allPCs,
+      software: allSoftware,
+      money: state.money + totalRevenue,
+      powerUsage: Math.min(totalPowerUsage, state.powerCapacity),
       lastUpdate: currentTime,
       gameTime: newGameTime,
     });
