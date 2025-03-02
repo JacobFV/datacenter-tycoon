@@ -3,6 +3,8 @@ import ReactDOM from 'react-dom/client'
 import App from './App.tsx'
 import './index.css'
 
+// Main entry point for Datacenter Tycoon with multiple room types
+
 const rootElement = document.getElementById('root');
 
 if (rootElement) {

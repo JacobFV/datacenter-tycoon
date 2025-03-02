@@ -765,8 +765,9 @@ const useGameStore = create<GameState>((set, get) => ({
           }
           return unit;
         } 
+        
         // Handle software
-        else if ('developmentProgress' in unit) {
+        if ('developmentProgress' in unit) {
           if (unit.status === 'building') {
             const softwareTypeInfo = softwareTypes[unit.type];
             const developmentTime = softwareTypeInfo.developmentTime * (1 - (state.buildSpeedMultiplier - 1));
@@ -794,8 +795,8 @@ const useGameStore = create<GameState>((set, get) => ({
     const allPCs: PC[] = [];
     const allSoftware: Software[] = [];
     
-    updatedRooms.forEach(room => {
-      room.units.forEach(unit => {
+    for (const room of updatedRooms) {
+      for (const unit of room.units) {
         if ('components' in unit) {
           if ('userSatisfaction' in unit) {
             allPCs.push(unit as PC);
@@ -805,8 +806,8 @@ const useGameStore = create<GameState>((set, get) => ({
         } else if ('developmentProgress' in unit) {
           allSoftware.push(unit as Software);
         }
-      });
-    });
+      }
+    }
     
     // Calculate revenue from all running units
     const serverRevenue = allServers
@@ -857,33 +858,33 @@ const useGameStore = create<GameState>((set, get) => ({
         
         // Mark unit for shutdown
         if (unitToShutdown.type === 'server') {
-          allServers.forEach(s => {
+          for (const s of allServers) {
             if (s.id === unitToShutdown.id) {
               s.status = 'offline';
             }
-          });
+          }
         } else if (unitToShutdown.type === 'pc') {
-          allPCs.forEach(p => {
+          for (const p of allPCs) {
             if (p.id === unitToShutdown.id) {
               p.status = 'offline';
             }
-          });
+          }
         } else if (unitToShutdown.type === 'software') {
-          allSoftware.forEach(sw => {
+          for (const sw of allSoftware) {
             if (sw.id === unitToShutdown.id) {
               sw.status = 'offline';
             }
-          });
+          }
         }
         
         // Also update in rooms
-        updatedRooms.forEach(room => {
-          room.units.forEach(unit => {
+        for (const room of updatedRooms) {
+          for (const unit of room.units) {
             if ('id' in unit && unit.id === unitToShutdown.id) {
               unit.status = 'offline';
             }
-          });
-        });
+          }
+        }
         
         i++;
       }

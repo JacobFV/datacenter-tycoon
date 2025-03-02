@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Paper,
@@ -18,12 +18,21 @@ import {
   LinearProgress,
   Snackbar,
   Alert,
+  Card,
+  CardContent,
+  CardActions,
+  TextField,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import InfoIcon from '@mui/icons-material/Info';
+import DeleteIcon from '@mui/icons-material/Delete';
 import useGameStore from '../store/gameStore';
-import type { Component, Server } from '../store/gameStore';
+import type { Component, Server, PC, Software, RoomType } from '../store/gameStore';
 
 const formatMoney = (amount: number): string => {
   return new Intl.NumberFormat('en-US', {
@@ -52,10 +61,11 @@ function TabPanel(props: TabPanelProps) {
       hidden={value !== index}
       id={`tabpanel-${index}`}
       aria-labelledby={`tab-${index}`}
+      style={{ flexGrow: 1, overflow: 'auto' }}
       {...other}
     >
       {value === index && (
-        <Box sx={{ p: 1 }}>
+        <Box>
           {children}
         </Box>
       )}
@@ -67,16 +77,24 @@ export default function ControlPanel() {
   const {
     money,
     servers,
+    pcs,
+    software,
+    rooms,
+    activeRoomId,
     availableComponents,
     upgrades,
     powerUsage,
     powerCapacity,
+    gameTime,
+    purchaseComponent,
     startBuildingServer,
+    startBuildingPC,
+    startDevelopingSoftware,
     purchaseUpgrade,
     shutdownServer,
     restartServer,
-    gameTime,
-    purchaseComponent,
+    purchaseRoom,
+    setActiveRoom,
   } = useGameStore();
 
   const [selectedComponents, setSelectedComponents] = useState<Component[]>([]);
@@ -84,13 +102,16 @@ export default function ControlPanel() {
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
   const [snackbarSeverity, setSnackbarSeverity] = useState<'success' | 'error'>('success');
+  const [softwareName, setSoftwareName] = useState('');
+  const [softwareType, setSoftwareType] = useState<'OS' | 'PRODUCTIVITY' | 'SECURITY' | 'DEVELOPMENT'>('OS');
+  const [developers, setDevelopers] = useState(1);
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
   };
 
   const handleAddComponent = (component: Component) => {
-    // First purchase the component
+    // Check if we can purchase this component
     if (purchaseComponent(component)) {
       setSelectedComponents([...selectedComponents, component]);
       showSnackbar(`Added ${component.name} to build queue`, 'success');
@@ -100,38 +121,55 @@ export default function ControlPanel() {
   };
 
   const handleRemoveComponent = (index: number) => {
-    const removedComponent = selectedComponents[index];
-    setSelectedComponents(selectedComponents.filter((_: Component, i: number) => i !== index));
-    showSnackbar(`Removed ${removedComponent.name} from build queue`, 'success');
+    const newComponents = [...selectedComponents];
+    const removed = newComponents.splice(index, 1)[0];
+    setSelectedComponents(newComponents);
+    showSnackbar(`Removed ${removed.name} from build queue`, 'success');
   };
 
   const handleBuildServer = () => {
-    if (selectedComponents.length > 0) {
-      // Check if we have all required component types
-      const hasRequiredComponents = 
-        selectedComponents.some(c => c.type === 'CPU') &&
-        selectedComponents.some(c => c.type === 'RAM') &&
-        selectedComponents.some(c => c.type === 'MOTHERBOARD');
-      
-      if (!hasRequiredComponents) {
-        showSnackbar('Server requires at least a CPU, RAM, and Motherboard', 'error');
-        return;
-      }
-      
-      startBuildingServer(selectedComponents);
-      setSelectedComponents([]);
-      showSnackbar('Server build started!', 'success');
-    } else {
-      showSnackbar('No components selected', 'error');
+    // Check if we have the required components
+    const missingComponents = getMissingRequiredComponents();
+    
+    if (missingComponents.length > 0) {
+      showSnackbar(`Missing required components: ${missingComponents.join(', ')}`, 'error');
+      return;
     }
+    
+    startBuildingServer(selectedComponents);
+    showSnackbar('Server build started!', 'success');
+    setSelectedComponents([]);
+  };
+  
+  const handleBuildPC = () => {
+    // Check if we have the required components for a PC
+    const hasCPU = selectedComponents.some(c => c.type === 'CPU');
+    const hasRAM = selectedComponents.some(c => c.type === 'RAM');
+    const hasMotherboard = selectedComponents.some(c => c.type === 'MOTHERBOARD');
+    const hasStorage = selectedComponents.some(c => c.type === 'STORAGE');
+    
+    const missingComponents = [];
+    if (!hasCPU) missingComponents.push('CPU');
+    if (!hasRAM) missingComponents.push('RAM');
+    if (!hasMotherboard) missingComponents.push('MOTHERBOARD');
+    if (!hasStorage) missingComponents.push('STORAGE');
+    
+    if (missingComponents.length > 0) {
+      showSnackbar(`Missing required components: ${missingComponents.join(', ')}`, 'error');
+      return;
+    }
+    
+    startBuildingPC(selectedComponents);
+    showSnackbar('PC build started!', 'success');
+    setSelectedComponents([]);
   };
 
   const handlePurchaseUpgrade = (upgradeId: string) => {
-    if (purchaseUpgrade(upgradeId)) {
-      const upgrade = upgrades.find(u => u.id === upgradeId);
-      showSnackbar(`Purchased upgrade: ${upgrade?.name}`, 'success');
+    const success = purchaseUpgrade(upgradeId);
+    if (success) {
+      showSnackbar('Upgrade purchased successfully!', 'success');
     } else {
-      showSnackbar('Failed to purchase upgrade', 'error');
+      showSnackbar('Not enough money for this upgrade', 'error');
     }
   };
 
@@ -166,13 +204,13 @@ export default function ControlPanel() {
   };
 
   // Calculate build progress for servers under construction
-  const getBuildProgress = (server: Server): number => {
+  const getBuildProgress = (server: Server | PC): number => {
     if (server.status !== 'building' || !server.buildStartTime) return 0;
     
-    const totalBuildTime = server.components.reduce((sum, comp) => sum + comp.buildTime, 0) * 1000;
-    const elapsedTime = Date.now() - server.buildStartTime;
+    const buildTime = server.components.reduce((sum, comp) => sum + comp.buildTime, 0) * 1000; // Convert to milliseconds
+    const elapsed = Date.now() - server.buildStartTime;
     
-    return Math.min(100, (elapsedTime / totalBuildTime) * 100);
+    return Math.min(100, (elapsed / buildTime) * 100);
   };
 
   // Check if a component type is already in the build queue
@@ -182,8 +220,40 @@ export default function ControlPanel() {
 
   // Get missing required components
   const getMissingRequiredComponents = (): string[] => {
-    const required = ['CPU', 'RAM', 'MOTHERBOARD'];
-    return required.filter(type => !selectedComponents.some(comp => comp.type === type));
+    const hasCPU = selectedComponents.some(c => c.type === 'CPU');
+    const hasRAM = selectedComponents.some(c => c.type === 'RAM');
+    const hasMotherboard = selectedComponents.some(c => c.type === 'MOTHERBOARD');
+    
+    const missing = [];
+    if (!hasCPU) missing.push('CPU');
+    if (!hasRAM) missing.push('RAM');
+    if (!hasMotherboard) missing.push('MOTHERBOARD');
+    
+    return missing;
+  };
+
+  // Get active room
+  const activeRoom = rooms.find(room => room.id === activeRoomId);
+
+  // Check if the active room is of a specific type
+  const isActiveRoomType = (type: 'SERVER' | 'PC' | 'SOFTWARE'): boolean => {
+    return activeRoom?.type === type;
+  };
+
+  const handleDevelopSoftware = () => {
+    if (!softwareName.trim()) {
+      showSnackbar('Please enter a software name', 'error');
+      return;
+    }
+    
+    const success = startDevelopingSoftware(softwareName, softwareType, developers);
+    if (success) {
+      showSnackbar(`Started developing ${softwareName}!`, 'success');
+      setSoftwareName('');
+      setDevelopers(1);
+    } else {
+      showSnackbar('Not enough money to start development', 'error');
+    }
   };
 
   return (
@@ -230,223 +300,403 @@ export default function ControlPanel() {
         <Tab label="Build" />
         <Tab label="Servers" />
         <Tab label="Upgrades" />
+        <Tab label="Rooms" />
       </Tabs>
 
       <TabPanel value={tabValue} index={0}>
-        <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
-          Components
-        </Typography>
-
-        {Object.entries(componentsByType).map(([type, components]) => (
-          <Box key={type} sx={{ mb: 2 }}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
-              {type}
-              {type === 'PSU' || type === 'STORAGE' || type === 'GPU' ? 
-                '' : 
-                <Chip 
-                  size="small" 
-                  label="Required" 
-                  color={isComponentTypeInQueue(type) ? "success" : "warning"}
-                  sx={{ ml: 1, height: 16, fontSize: '0.6rem' }}
-                />
-              }
+        <Box sx={{ p: 2 }}>
+          <Typography variant="h6" gutterBottom>
+            Available Components
+          </Typography>
+          
+          <Grid container spacing={2}>
+            {availableComponents.map((component) => (
+              <Grid item xs={12} sm={6} md={4} key={component.id}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="h6" component="div">
+                      {component.name}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Type: {component.type}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Performance: {component.performance}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Power: {formatPower(component.powerUsage)}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Cost: {formatMoney(component.cost)}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Build Time: {component.buildTime}s
+                    </Typography>
+                  </CardContent>
+                  <CardActions>
+                    <Tooltip title={component.description}>
+                      <IconButton size="small">
+                        <InfoIcon />
+                      </IconButton>
+                    </Tooltip>
+                    <Button 
+                      size="small" 
+                      onClick={() => handleAddComponent(component)}
+                      disabled={
+                        money < component.cost || 
+                        (component.type === 'CPU' && isComponentTypeInQueue('CPU')) ||
+                        (component.type === 'MOTHERBOARD' && isComponentTypeInQueue('MOTHERBOARD'))
+                      }
+                    >
+                      Add to Build ({formatMoney(component.cost)})
+                    </Button>
+                  </CardActions>
+                </Card>
+              </Grid>
+            ))}
+          </Grid>
+          
+          <Box sx={{ mt: 4 }}>
+            <Typography variant="h6" gutterBottom>
+              Build Queue
             </Typography>
-            <Grid container spacing={1}>
-              {components.map((component) => (
-                <Grid item xs={12} key={component.id}>
-                  <Button
+            
+            {selectedComponents.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                No components selected. Add components to build a server or PC.
+              </Typography>
+            ) : (
+              <>
+                <List>
+                  {selectedComponents.map((component, index) => (
+                    <ListItem 
+                      key={`${component.id}-${index}`}
+                      secondaryAction={
+                        <IconButton edge="end" aria-label="delete" onClick={() => handleRemoveComponent(index)}>
+                          <DeleteIcon />
+                        </IconButton>
+                      }
+                    >
+                      <ListItemText 
+                        primary={component.name} 
+                        secondary={`${component.type} - ${formatMoney(component.cost)}`} 
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+                
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
+                  <Typography variant="body1">
+                    Total Cost: {formatMoney(selectedComponents.reduce((sum, comp) => sum + comp.cost, 0))}
+                  </Typography>
+                  <Typography variant="body1">
+                    Components: {selectedComponents.length}
+                  </Typography>
+                </Box>
+                
+                <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, mt: 2 }}>
+                  {isActiveRoomType('SERVER') && (
+                    <Button 
+                      variant="contained" 
+                      color="primary" 
+                      onClick={handleBuildServer}
+                      disabled={selectedComponents.length === 0}
+                    >
+                      Build Server
+                    </Button>
+                  )}
+                  
+                  {isActiveRoomType('PC') && (
+                    <Button 
+                      variant="contained" 
+                      color="secondary" 
+                      onClick={handleBuildPC}
+                      disabled={selectedComponents.length === 0}
+                    >
+                      Build PC
+                    </Button>
+                  )}
+                  
+                  {!isActiveRoomType('SERVER') && !isActiveRoomType('PC') && (
+                    <Typography variant="body2" color="error">
+                      Please select a Server Room or PC Room to build in
+                    </Typography>
+                  )}
+                </Box>
+              </>
+            )}
+          </Box>
+          
+          {isActiveRoomType('SOFTWARE') && (
+            <Box sx={{ mt: 4 }}>
+              <Typography variant="h6" gutterBottom>
+                Develop Software
+              </Typography>
+              
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <TextField
+                    label="Software Name"
                     variant="outlined"
                     fullWidth
-                    onClick={() => handleAddComponent(component)}
-                    disabled={money < component.cost || 
-                      (isComponentTypeInQueue(component.type) && 
-                      (component.type === 'CPU' || component.type === 'MOTHERBOARD'))}
-                    sx={{ 
-                      justifyContent: 'flex-start', 
-                      textAlign: 'left',
-                      height: '60px',
-                      position: 'relative',
-                      overflow: 'hidden'
-                    }}
-                  >
-                    <Box sx={{ width: '100%' }}>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
-                          {component.name}
-                        </Typography>
-                        <Typography variant="body2">
-                          {formatMoney(component.cost)}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', gap: 1, mt: 0.5 }}>
-                        <Chip 
-                          label={`Perf: ${component.performance}`} 
-                          size="small" 
-                          sx={{ height: 20, fontSize: '0.7rem' }}
-                        />
-                        <Chip 
-                          label={`Power: ${formatPower(component.powerUsage)}`} 
-                          size="small" 
-                          sx={{ height: 20, fontSize: '0.7rem' }}
-                        />
-                        <Tooltip title={component.description} arrow>
-                          <InfoIcon sx={{ fontSize: 16, ml: 'auto' }} />
-                        </Tooltip>
-                      </Box>
-                    </Box>
-                  </Button>
+                    value={softwareName}
+                    onChange={(e) => setSoftwareName(e.target.value)}
+                  />
                 </Grid>
-              ))}
-            </Grid>
-          </Box>
-        ))}
-
-        <Divider sx={{ my: 2 }} />
-
-        <Typography variant="h6" gutterBottom>
-          Server Build Queue
-        </Typography>
-
-        {selectedComponents.length === 0 ? (
-          <Typography variant="body2" sx={{ color: 'text.secondary', my: 2, textAlign: 'center' }}>
-            Add components to build a server
-          </Typography>
-        ) : (
-          <List sx={{ maxHeight: 200, overflow: 'auto' }}>
-            {selectedComponents.map((component, index) => (
-              <ListItem
-                key={`${component.id}-${index}`}
-                secondaryAction={
-                  <IconButton
-                    edge="end"
-                    size="small"
-                    color="error"
-                    onClick={() => handleRemoveComponent(index)}
-                  >
-                    <PowerSettingsNewIcon fontSize="small" />
-                  </IconButton>
-                }
-                sx={{ py: 0.5 }}
-              >
-                <ListItemText
-                  primary={component.name}
-                  secondary={formatMoney(component.cost)}
-                  primaryTypographyProps={{ variant: 'body2' }}
-                  secondaryTypographyProps={{ variant: 'caption' }}
-                />
-              </ListItem>
-            ))}
-          </List>
-        )}
-
-        {selectedComponents.length > 0 && (
-          <Box sx={{ mt: 2 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-              <Typography variant="body2">
-                Total Cost: {formatMoney(totalCost)}
-              </Typography>
-              <Typography variant="body2">
-                Est. Revenue: {formatMoney(estimatedRevenue)}/s
-              </Typography>
+                
+                <Grid item xs={12} sm={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Software Type</InputLabel>
+                    <Select
+                      value={softwareType}
+                      label="Software Type"
+                      onChange={(e) => setSoftwareType(e.target.value as any)}
+                    >
+                      <MenuItem value="OS">Operating System</MenuItem>
+                      <MenuItem value="PRODUCTIVITY">Productivity Suite</MenuItem>
+                      <MenuItem value="SECURITY">Security Software</MenuItem>
+                      <MenuItem value="DEVELOPMENT">Development Tools</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                
+                <Grid item xs={12} sm={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Developers</InputLabel>
+                    <Select
+                      value={developers}
+                      label="Developers"
+                      onChange={(e) => setDevelopers(Number(e.target.value))}
+                    >
+                      {[1, 2, 3, 4, 5].map(num => (
+                        <MenuItem key={num} value={num}>{num} {num === 1 ? 'Developer' : 'Developers'}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                
+                <Grid item xs={12}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Typography>
+                      Estimated Cost: {formatMoney(
+                        softwareType === 'OS' ? 5000 * developers :
+                        softwareType === 'PRODUCTIVITY' ? 2000 * developers :
+                        softwareType === 'SECURITY' ? 3000 * developers :
+                        4000 * developers
+                      )}
+                    </Typography>
+                    <Button 
+                      variant="contained" 
+                      color="info" 
+                      onClick={handleDevelopSoftware}
+                      disabled={!softwareName.trim()}
+                    >
+                      Start Development
+                    </Button>
+                  </Box>
+                </Grid>
+              </Grid>
             </Box>
-            
-            {getMissingRequiredComponents().length > 0 && (
-              <Typography variant="caption" color="error" sx={{ display: 'block', mb: 1 }}>
-                Missing required components: {getMissingRequiredComponents().join(', ')}
-              </Typography>
-            )}
-            
-            <Button
-              variant="contained"
-              fullWidth
-              onClick={handleBuildServer}
-              disabled={getMissingRequiredComponents().length > 0}
-            >
-              Build Server
-            </Button>
-          </Box>
-        )}
+          )}
+        </Box>
       </TabPanel>
 
       <TabPanel value={tabValue} index={1}>
-        <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
-          Active Servers ({servers.length})
-        </Typography>
-
-        {servers.length === 0 ? (
-          <Typography variant="body2" sx={{ color: 'text.secondary', my: 2, textAlign: 'center' }}>
-            No servers built yet. Go to the Build tab to create your first server.
-          </Typography>
-        ) : (
-          <List sx={{ maxHeight: 400, overflow: 'auto' }}>
-            {servers.map((server) => (
-              <Paper key={server.id} sx={{ mb: 1, p: 1 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Typography variant="subtitle1">
-                    Server {server.id.slice(-4)}
-                  </Typography>
-                  {server.status === 'running' ? (
-                    <IconButton 
-                      size="small" 
-                      color="error" 
-                      onClick={() => shutdownServer(server.id)}
-                      title="Shutdown"
-                    >
-                      <PowerSettingsNewIcon fontSize="small" />
-                    </IconButton>
-                  ) : server.status === 'offline' ? (
-                    <IconButton 
-                      size="small" 
-                      color="success" 
-                      onClick={() => restartServer(server.id)}
-                      title="Start"
-                    >
-                      <PlayArrowIcon fontSize="small" />
-                    </IconButton>
-                  ) : (
-                    <CircularProgress size={20} />
-                  )}
-                </Box>
-                
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}>
-                  <Typography variant="body2">
-                    Status: 
-                    <Chip 
-                      label={server.status} 
-                      size="small" 
-                      color={
-                        server.status === 'running' ? 'success' : 
-                        server.status === 'building' ? 'warning' : 'error'
+        <Box sx={{ p: 2 }}>
+          <Tabs value={activeRoom?.type || 'SERVER'} onChange={(_, newValue) => {
+            // Find first room of this type and set it as active
+            const roomOfType = rooms.find(r => r.type === newValue);
+            if (roomOfType) {
+              setActiveRoom(roomOfType.id);
+            }
+          }}>
+            <Tab label="Servers" value="SERVER" />
+            <Tab label="PCs" value="PC" />
+            <Tab label="Software" value="SOFTWARE" />
+          </Tabs>
+          
+          {isActiveRoomType('SERVER') && (
+            <>
+              <Typography variant="h6" sx={{ mt: 2 }}>
+                Your Servers
+              </Typography>
+              
+              {servers.length === 0 ? (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  No servers built yet. Go to the Build tab to create your first server.
+                </Typography>
+              ) : (
+                <List>
+                  {servers.map((server) => (
+                    <ListItem 
+                      key={server.id}
+                      secondaryAction={
+                        <Box>
+                          {server.status === 'running' ? (
+                            <IconButton edge="end" aria-label="shutdown" onClick={() => shutdownServer(server.id)}>
+                              <PowerSettingsNewIcon color="error" />
+                            </IconButton>
+                          ) : server.status === 'offline' ? (
+                            <IconButton edge="end" aria-label="start" onClick={() => restartServer(server.id)}>
+                              <PlayArrowIcon color="success" />
+                            </IconButton>
+                          ) : (
+                            <CircularProgress 
+                              size={24} 
+                              variant="determinate" 
+                              value={getBuildProgress(server)} 
+                            />
+                          )}
+                        </Box>
                       }
-                      sx={{ ml: 1, height: 20, fontSize: '0.7rem' }}
-                    />
-                  </Typography>
-                  <Typography variant="body2">
-                    {formatMoney(server.revenue)}/s
-                  </Typography>
-                </Box>
-                
-                {server.status === 'building' && (
-                  <Box sx={{ width: '100%', mt: 1 }}>
-                    <LinearProgress 
-                      variant="determinate" 
-                      value={getBuildProgress(server)} 
-                    />
-                  </Box>
-                )}
-                
-                <Box sx={{ mt: 1 }}>
-                  <Typography variant="caption" sx={{ display: 'block' }}>
-                    Components: {server.components.map(c => c.name).join(', ')}
-                  </Typography>
-                  <Typography variant="caption" sx={{ display: 'block' }}>
-                    Power Usage: {formatPower(server.powerUsage)}
-                  </Typography>
-                </Box>
-              </Paper>
-            ))}
-          </List>
-        )}
+                    >
+                      <ListItemText 
+                        primary={`Server ${server.id.substring(server.id.length - 5)}`} 
+                        secondary={
+                          <>
+                            <Typography variant="body2" component="span">
+                              Status: {server.status.toUpperCase()} | 
+                              Revenue: {formatMoney(server.revenue)}/s | 
+                              Power: {formatPower(server.powerUsage)}
+                            </Typography>
+                            <br />
+                            <Typography variant="body2" component="span">
+                              Components: {server.components.length} | 
+                              Efficiency: {(server.efficiency * 100).toFixed(0)}%
+                            </Typography>
+                          </>
+                        } 
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              )}
+            </>
+          )}
+          
+          {isActiveRoomType('PC') && (
+            <>
+              <Typography variant="h6" sx={{ mt: 2 }}>
+                Your PCs
+              </Typography>
+              
+              {pcs.length === 0 ? (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  No PCs built yet. Go to the Build tab to create your first PC.
+                </Typography>
+              ) : (
+                <List>
+                  {pcs.map((pc) => (
+                    <ListItem 
+                      key={pc.id}
+                      secondaryAction={
+                        <Box>
+                          {pc.status === 'running' ? (
+                            <IconButton edge="end" aria-label="shutdown" onClick={() => shutdownServer(pc.id)}>
+                              <PowerSettingsNewIcon color="error" />
+                            </IconButton>
+                          ) : pc.status === 'offline' ? (
+                            <IconButton edge="end" aria-label="start" onClick={() => restartServer(pc.id)}>
+                              <PlayArrowIcon color="success" />
+                            </IconButton>
+                          ) : (
+                            <CircularProgress 
+                              size={24} 
+                              variant="determinate" 
+                              value={getBuildProgress(pc)} 
+                            />
+                          )}
+                        </Box>
+                      }
+                    >
+                      <ListItemText 
+                        primary={`PC ${pc.id.substring(pc.id.length - 5)}`} 
+                        secondary={
+                          <>
+                            <Typography variant="body2" component="span">
+                              Status: {pc.status.toUpperCase()} | 
+                              Revenue: {formatMoney(pc.revenue)}/s | 
+                              Power: {formatPower(pc.powerUsage)}
+                            </Typography>
+                            <br />
+                            <Typography variant="body2" component="span">
+                              Components: {pc.components.length} | 
+                              User Satisfaction: {pc.userSatisfaction.toFixed(0)}%
+                            </Typography>
+                          </>
+                        } 
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              )}
+            </>
+          )}
+          
+          {isActiveRoomType('SOFTWARE') && (
+            <>
+              <Typography variant="h6" sx={{ mt: 2 }}>
+                Your Software
+              </Typography>
+              
+              {software.length === 0 ? (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  No software developed yet. Go to the Build tab to start developing software.
+                </Typography>
+              ) : (
+                <List>
+                  {software.map((sw) => (
+                    <ListItem 
+                      key={sw.id}
+                      secondaryAction={
+                        <Box>
+                          {sw.status === 'running' ? (
+                            <IconButton edge="end" aria-label="shutdown" onClick={() => shutdownServer(sw.id)}>
+                              <PowerSettingsNewIcon color="error" />
+                            </IconButton>
+                          ) : sw.status === 'offline' ? (
+                            <IconButton edge="end" aria-label="start" onClick={() => restartServer(sw.id)}>
+                              <PlayArrowIcon color="success" />
+                            </IconButton>
+                          ) : (
+                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                              <Typography variant="body2" sx={{ mr: 1 }}>
+                                {sw.developmentProgress.toFixed(0)}%
+                              </Typography>
+                              <CircularProgress 
+                                size={24} 
+                                variant="determinate" 
+                                value={sw.developmentProgress} 
+                              />
+                            </Box>
+                          )}
+                        </Box>
+                      }
+                    >
+                      <ListItemText 
+                        primary={sw.name} 
+                        secondary={
+                          <>
+                            <Typography variant="body2" component="span">
+                              Type: {sw.type} | 
+                              Status: {sw.status.toUpperCase()} | 
+                              Revenue: {formatMoney(sw.revenue)}/s
+                            </Typography>
+                            <br />
+                            <Typography variant="body2" component="span">
+                              Developers: {sw.developers} | 
+                              Power: {formatPower(sw.powerUsage)}
+                            </Typography>
+                          </>
+                        } 
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              )}
+            </>
+          )}
+        </Box>
       </TabPanel>
 
       <TabPanel value={tabValue} index={2}>
@@ -455,7 +705,7 @@ export default function ControlPanel() {
         </Typography>
 
         <Grid container spacing={2}>
-          {upgrades.map((upgrade) => (
+          {upgrades.filter(upgrade => !upgrade.applied).map((upgrade) => (
             <Grid item xs={12} key={upgrade.id}>
               <Paper 
                 sx={{ 
@@ -499,6 +749,93 @@ export default function ControlPanel() {
             </Grid>
           ))}
         </Grid>
+      </TabPanel>
+
+      <TabPanel value={tabValue} index={3}>
+        <Box sx={{ p: 2 }}>
+          <Typography variant="h6" gutterBottom>
+            Datacenter Rooms
+          </Typography>
+          
+          <Grid container spacing={2} sx={{ mb: 2 }}>
+            <Grid item xs={12} sm={4}>
+              <Button 
+                variant="contained" 
+                color="primary" 
+                fullWidth
+                onClick={() => {
+                  const success = purchaseRoom('SERVER', [rooms.length, 0]);
+                  if (success) {
+                    showSnackbar('Server room purchased!', 'success');
+                  } else {
+                    showSnackbar('Not enough money to purchase server room', 'error');
+                  }
+                }}
+              >
+                Purchase Server Room ($5,000)
+              </Button>
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <Button 
+                variant="contained" 
+                color="secondary" 
+                fullWidth
+                onClick={() => {
+                  const success = purchaseRoom('PC', [rooms.length, 1]);
+                  if (success) {
+                    showSnackbar('PC room purchased!', 'success');
+                  } else {
+                    showSnackbar('Not enough money to purchase PC room', 'error');
+                  }
+                }}
+              >
+                Purchase PC Room ($3,000)
+              </Button>
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <Button 
+                variant="contained" 
+                color="info" 
+                fullWidth
+                onClick={() => {
+                  const success = purchaseRoom('SOFTWARE', [rooms.length, 2]);
+                  if (success) {
+                    showSnackbar('Software room purchased!', 'success');
+                  } else {
+                    showSnackbar('Not enough money to purchase software room', 'error');
+                  }
+                }}
+              >
+                Purchase Software Room ($7,000)
+              </Button>
+            </Grid>
+          </Grid>
+          
+          <Typography variant="h6" gutterBottom>
+            Your Rooms
+          </Typography>
+          
+          <List>
+            {rooms.map(room => (
+              <ListItem 
+                key={room.id}
+                secondaryAction={
+                  <Button 
+                    variant={room.id === activeRoomId ? "contained" : "outlined"}
+                    onClick={() => setActiveRoom(room.id)}
+                  >
+                    {room.id === activeRoomId ? "Active" : "Select"}
+                  </Button>
+                }
+              >
+                <ListItemText 
+                  primary={room.name} 
+                  secondary={`Type: ${room.type} | Units: ${room.units.length}/${room.maxUnits}`} 
+                />
+              </ListItem>
+            ))}
+          </List>
+        </Box>
       </TabPanel>
 
       <Snackbar 

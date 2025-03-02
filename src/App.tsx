@@ -26,25 +26,36 @@ function App() {
 
   // Update game state every second
   useEffect(() => {
-    const gameLoop = setInterval(() => {
+    const interval = setInterval(() => {
       updateGameState();
     }, 1000);
 
-    return () => clearInterval(gameLoop);
+    return () => clearInterval(interval);
   }, [updateGameState]);
 
   return (
     <ThemeProvider theme={darkTheme}>
       <CssBaseline />
       <Box sx={{ 
-        width: '100vw', 
-        height: '100vh', 
-        overflow: 'hidden',
-        position: 'relative',
-        backgroundColor: '#121212'
+        display: 'flex', 
+        flexDirection: { xs: 'column', md: 'row' }, 
+        height: '100vh' 
       }}>
-        <DatacenterScene />
-        <ControlPanel />
+        <Box sx={{ 
+          flex: 1, 
+          height: { xs: '50vh', md: '100vh' },
+          position: 'relative'
+        }}>
+          <DatacenterScene />
+        </Box>
+        <Box sx={{ 
+          width: { xs: '100%', md: '400px' }, 
+          height: { xs: '50vh', md: '100vh' }, 
+          overflow: 'auto',
+          borderLeft: '1px solid rgba(255, 255, 255, 0.12)'
+        }}>
+          <ControlPanel />
+        </Box>
       </Box>
     </ThemeProvider>
   );

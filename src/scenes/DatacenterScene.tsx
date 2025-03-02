@@ -1,9 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
+import { OrbitControls, PerspectiveCamera, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import useGameStore from '../store/gameStore';
-import type { Server, PC, Software, Room, RoomType } from '../store/gameStore';
+import type { Server, PC, Software, Room } from '../store/gameStore';
 
 // Server Rack Component
 interface ServerRackProps {
@@ -97,7 +97,7 @@ function PCDesk({ position, pc }: PCDeskProps) {
       {/* Monitor Screen */}
       <mesh position={[0, height + 0.3, 0.03]} castShadow>
         <boxGeometry args={[0.55, 0.35, 0.01]} />
-        <meshStandardMaterial color="#333" emissive={statusColor} emissiveIntensity={0.5} />
+        <meshStandardMaterial color="#333" emissive={new THREE.Color(statusColor)} emissiveIntensity={0.5} />
       </mesh>
       
       {/* Keyboard */}
@@ -153,7 +153,7 @@ function SoftwareWorkstation({ position, software }: SoftwareWorkstationProps) {
       {Array.from({ length: software.developers }).map((_, i) => {
         const offset = (i - (software.developers - 1) / 2) * 0.7;
         return (
-          <group key={i} position={[offset, 0, 0]}>
+          <group key={`monitor-${software.id}-${i}`} position={[offset, 0, 0]}>
             {/* Monitor */}
             <mesh position={[0, height + 0.3, -0.2]} castShadow>
               <boxGeometry args={[0.6, 0.4, 0.05]} />
@@ -163,7 +163,7 @@ function SoftwareWorkstation({ position, software }: SoftwareWorkstationProps) {
             {/* Monitor Screen */}
             <mesh position={[0, height + 0.3, -0.17]} castShadow>
               <boxGeometry args={[0.55, 0.35, 0.01]} />
-              <meshStandardMaterial color="#333" emissive={statusColor} emissiveIntensity={0.5} />
+              <meshStandardMaterial color="#333" emissive={new THREE.Color(statusColor)} emissiveIntensity={0.5} />
             </mesh>
             
             {/* Keyboard */}
@@ -231,7 +231,7 @@ function ServerUnit({ server, position }: ServerUnitProps) {
       {/* Status light */}
       <mesh position={[width/2 - 0.1, 0, depth/2 + 0.01]}>
         <circleGeometry args={[0.03, 16]} />
-        <meshStandardMaterial color={statusColor} emissive={statusColor} emissiveIntensity={0.5} />
+        <meshStandardMaterial color={statusColor} emissive={new THREE.Color(statusColor)} emissiveIntensity={0.5} />
       </mesh>
       
       {/* Activity lights */}
@@ -239,11 +239,11 @@ function ServerUnit({ server, position }: ServerUnitProps) {
         <>
           <mesh position={[width/2 - 0.2, 0, depth/2 + 0.01]}>
             <circleGeometry args={[0.02, 16]} />
-            <meshStandardMaterial color="#ffff00" emissive="#ffff00" emissiveIntensity={Math.random() * 0.5} />
+            <meshStandardMaterial color="#ffff00" emissive={new THREE.Color("#ffff00")} emissiveIntensity={Math.random() * 0.5} />
           </mesh>
           <mesh position={[width/2 - 0.3, 0, depth/2 + 0.01]}>
             <circleGeometry args={[0.02, 16]} />
-            <meshStandardMaterial color="#ffff00" emissive="#ffff00" emissiveIntensity={Math.random() * 0.5} />
+            <meshStandardMaterial color="#ffff00" emissive={new THREE.Color("#ffff00")} emissiveIntensity={Math.random() * 0.5} />
           </mesh>
         </>
       )}
@@ -298,7 +298,7 @@ function Floor() {
   );
 }
 
-function Room({ room, position }: RoomProps) {
+function DatacenterRoomComponent({ room, position }: RoomProps) {
   const roomSize = room.size * 5; // Scale room size
   const wallHeight = 3;
   
@@ -356,16 +356,21 @@ function Room({ room, position }: RoomProps) {
           <planeGeometry args={[roomSize * 0.8, 1]} />
           <meshBasicMaterial color="#000" transparent opacity={0.7} />
         </mesh>
-        <mesh position={[0, 0, 0.01]}>
-          <textGeometry args={[room.name, { size: 0.5, height: 0.1 }]} />
-          <meshBasicMaterial color="#fff" />
-        </mesh>
+        <Text
+          position={[0, 0, 0.01]}
+          fontSize={0.5}
+          color="#fff"
+          anchorX="center"
+          anchorY="middle"
+        >
+          {room.name}
+        </Text>
       </group>
       
       {/* Ceiling lights */}
       {Array.from({ length: Math.ceil(room.size / 2) }).map((_, i) => (
         <pointLight 
-          key={i} 
+          key={`light-${room.id}-${i}`}
           position={[
             (i - Math.floor(room.size / 4)) * 3, 
             wallHeight - 0.5, 
@@ -513,11 +518,17 @@ function DatacenterMap() {
               0.02
             ]}
             onClick={() => setActiveRoom(room.id)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                setActiveRoom(room.id);
+              }
+            }}
+            tabIndex={0}
           >
             <boxGeometry args={[size, size, 0.05]} />
             <meshBasicMaterial 
               color={roomColors[room.type]} 
-              emissive={isActive ? '#ffffff' : roomColors[room.type]} 
+              emissive={new THREE.Color(isActive ? '#ffffff' : roomColors[room.type])} 
               emissiveIntensity={isActive ? 0.5 : 0}
             />
           </mesh>
@@ -534,7 +545,7 @@ export default function DatacenterScene() {
   // Generate unique IDs for rooms
   const roomIds = useMemo(() => 
     Array.from({ length: Math.max(1, rooms.length) }).map((_, i) => `room-${i}-${Date.now()}`),
-    []
+    [rooms.length]
   );
 
   return (
@@ -564,7 +575,7 @@ export default function DatacenterScene() {
       
       {/* Display active room */}
       {activeRoom && (
-        <Room 
+        <DatacenterRoomComponent 
           key={`room-${activeRoom.id}`}
           room={activeRoom}
           position={[0, 0, 0]}
