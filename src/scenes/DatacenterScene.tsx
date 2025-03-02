@@ -257,7 +257,7 @@ export default function DatacenterScene() {
   // Generate unique IDs for server racks
   const rackIds = useMemo(() => 
     Array.from({ length: Math.max(1, serverRacks.length) }).map((_, i) => `rack-${i}-${Date.now()}`),
-    [serverRacks.length]
+    []
   );
 
   return (

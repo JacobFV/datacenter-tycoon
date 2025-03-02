@@ -16,6 +16,8 @@ import {
   IconButton,
   Chip,
   LinearProgress,
+  Snackbar,
+  Alert,
 } from '@mui/material';
 import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
@@ -74,32 +76,73 @@ export default function ControlPanel() {
     shutdownServer,
     restartServer,
     gameTime,
+    purchaseComponent,
   } = useGameStore();
 
   const [selectedComponents, setSelectedComponents] = useState<Component[]>([]);
   const [tabValue, setTabValue] = useState(0);
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [snackbarSeverity, setSnackbarSeverity] = useState<'success' | 'error'>('success');
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
   };
 
   const handleAddComponent = (component: Component) => {
-    setSelectedComponents([...selectedComponents, component]);
+    // First purchase the component
+    if (purchaseComponent(component)) {
+      setSelectedComponents([...selectedComponents, component]);
+      showSnackbar(`Added ${component.name} to build queue`, 'success');
+    } else {
+      showSnackbar(`Not enough money to purchase ${component.name}`, 'error');
+    }
   };
 
   const handleRemoveComponent = (index: number) => {
+    const removedComponent = selectedComponents[index];
     setSelectedComponents(selectedComponents.filter((_: Component, i: number) => i !== index));
+    showSnackbar(`Removed ${removedComponent.name} from build queue`, 'success');
   };
 
   const handleBuildServer = () => {
     if (selectedComponents.length > 0) {
+      // Check if we have all required component types
+      const hasRequiredComponents = 
+        selectedComponents.some(c => c.type === 'CPU') &&
+        selectedComponents.some(c => c.type === 'RAM') &&
+        selectedComponents.some(c => c.type === 'MOTHERBOARD');
+      
+      if (!hasRequiredComponents) {
+        showSnackbar('Server requires at least a CPU, RAM, and Motherboard', 'error');
+        return;
+      }
+      
       startBuildingServer(selectedComponents);
       setSelectedComponents([]);
+      showSnackbar('Server build started!', 'success');
+    } else {
+      showSnackbar('No components selected', 'error');
     }
   };
 
   const handlePurchaseUpgrade = (upgradeId: string) => {
-    purchaseUpgrade(upgradeId);
+    if (purchaseUpgrade(upgradeId)) {
+      const upgrade = upgrades.find(u => u.id === upgradeId);
+      showSnackbar(`Purchased upgrade: ${upgrade?.name}`, 'success');
+    } else {
+      showSnackbar('Failed to purchase upgrade', 'error');
+    }
+  };
+
+  const showSnackbar = (message: string, severity: 'success' | 'error') => {
+    setSnackbarMessage(message);
+    setSnackbarSeverity(severity);
+    setSnackbarOpen(true);
+  };
+
+  const handleCloseSnackbar = () => {
+    setSnackbarOpen(false);
   };
 
   const totalCost = selectedComponents.reduce((sum: number, comp: Component) => sum + comp.cost, 0);
@@ -130,6 +173,17 @@ export default function ControlPanel() {
     const elapsedTime = Date.now() - server.buildStartTime;
     
     return Math.min(100, (elapsedTime / totalBuildTime) * 100);
+  };
+
+  // Check if a component type is already in the build queue
+  const isComponentTypeInQueue = (type: string): boolean => {
+    return selectedComponents.some(comp => comp.type === type);
+  };
+
+  // Get missing required components
+  const getMissingRequiredComponents = (): string[] => {
+    const required = ['CPU', 'RAM', 'MOTHERBOARD'];
+    return required.filter(type => !selectedComponents.some(comp => comp.type === type));
   };
 
   return (
@@ -187,6 +241,15 @@ export default function ControlPanel() {
           <Box key={type} sx={{ mb: 2 }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
               {type}
+              {type === 'PSU' || type === 'STORAGE' || type === 'GPU' ? 
+                '' : 
+                <Chip 
+                  size="small" 
+                  label="Required" 
+                  color={isComponentTypeInQueue(type) ? "success" : "warning"}
+                  sx={{ ml: 1, height: 16, fontSize: '0.6rem' }}
+                />
+              }
             </Typography>
             <Grid container spacing={1}>
               {components.map((component) => (
@@ -195,7 +258,9 @@ export default function ControlPanel() {
                     variant="outlined"
                     fullWidth
                     onClick={() => handleAddComponent(component)}
-                    disabled={money < component.cost}
+                    disabled={money < component.cost || 
+                      (isComponentTypeInQueue(component.type) && 
+                      (component.type === 'CPU' || component.type === 'MOTHERBOARD'))}
                     sx={{ 
                       justifyContent: 'flex-start', 
                       textAlign: 'left',
@@ -224,7 +289,7 @@ export default function ControlPanel() {
                           size="small" 
                           sx={{ height: 20, fontSize: '0.7rem' }}
                         />
-                        <Tooltip title={component.description}>
+                        <Tooltip title={component.description} arrow>
                           <InfoIcon sx={{ fontSize: 16, ml: 'auto' }} />
                         </Tooltip>
                       </Box>
@@ -242,31 +307,37 @@ export default function ControlPanel() {
           Server Build Queue
         </Typography>
 
-        <List sx={{ maxHeight: 200, overflow: 'auto' }}>
-          {selectedComponents.map((component, index) => (
-            <ListItem
-              key={`${component.id}-${index}`}
-              secondaryAction={
-                <IconButton
-                  edge="end"
-                  size="small"
-                  color="error"
-                  onClick={() => handleRemoveComponent(index)}
-                >
-                  <PowerSettingsNewIcon fontSize="small" />
-                </IconButton>
-              }
-              sx={{ py: 0.5 }}
-            >
-              <ListItemText
-                primary={component.name}
-                secondary={formatMoney(component.cost)}
-                primaryTypographyProps={{ variant: 'body2' }}
-                secondaryTypographyProps={{ variant: 'caption' }}
-              />
-            </ListItem>
-          ))}
-        </List>
+        {selectedComponents.length === 0 ? (
+          <Typography variant="body2" sx={{ color: 'text.secondary', my: 2, textAlign: 'center' }}>
+            Add components to build a server
+          </Typography>
+        ) : (
+          <List sx={{ maxHeight: 200, overflow: 'auto' }}>
+            {selectedComponents.map((component, index) => (
+              <ListItem
+                key={`${component.id}-${index}`}
+                secondaryAction={
+                  <IconButton
+                    edge="end"
+                    size="small"
+                    color="error"
+                    onClick={() => handleRemoveComponent(index)}
+                  >
+                    <PowerSettingsNewIcon fontSize="small" />
+                  </IconButton>
+                }
+                sx={{ py: 0.5 }}
+              >
+                <ListItemText
+                  primary={component.name}
+                  secondary={formatMoney(component.cost)}
+                  primaryTypographyProps={{ variant: 'body2' }}
+                  secondaryTypographyProps={{ variant: 'caption' }}
+                />
+              </ListItem>
+            ))}
+          </List>
+        )}
 
         {selectedComponents.length > 0 && (
           <Box sx={{ mt: 2 }}>
@@ -278,11 +349,18 @@ export default function ControlPanel() {
                 Est. Revenue: {formatMoney(estimatedRevenue)}/s
               </Typography>
             </Box>
+            
+            {getMissingRequiredComponents().length > 0 && (
+              <Typography variant="caption" color="error" sx={{ display: 'block', mb: 1 }}>
+                Missing required components: {getMissingRequiredComponents().join(', ')}
+              </Typography>
+            )}
+            
             <Button
               variant="contained"
               fullWidth
               onClick={handleBuildServer}
-              disabled={money < totalCost}
+              disabled={getMissingRequiredComponents().length > 0}
             >
               Build Server
             </Button>
@@ -295,74 +373,80 @@ export default function ControlPanel() {
           Active Servers ({servers.length})
         </Typography>
 
-        <List sx={{ maxHeight: 400, overflow: 'auto' }}>
-          {servers.map((server) => (
-            <Paper key={server.id} sx={{ mb: 1, p: 1 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Typography variant="subtitle1">
-                  Server {server.id.slice(-4)}
-                </Typography>
-                {server.status === 'running' ? (
-                  <IconButton 
-                    size="small" 
-                    color="error" 
-                    onClick={() => shutdownServer(server.id)}
-                    title="Shutdown"
-                  >
-                    <PowerSettingsNewIcon fontSize="small" />
-                  </IconButton>
-                ) : server.status === 'offline' ? (
-                  <IconButton 
-                    size="small" 
-                    color="success" 
-                    onClick={() => restartServer(server.id)}
-                    title="Start"
-                  >
-                    <PlayArrowIcon fontSize="small" />
-                  </IconButton>
-                ) : (
-                  <CircularProgress size={20} />
-                )}
-              </Box>
-              
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}>
-                <Typography variant="body2">
-                  Status: 
-                  <Chip 
-                    label={server.status} 
-                    size="small" 
-                    color={
-                      server.status === 'running' ? 'success' : 
-                      server.status === 'building' ? 'warning' : 'error'
-                    }
-                    sx={{ ml: 1, height: 20, fontSize: '0.7rem' }}
-                  />
-                </Typography>
-                <Typography variant="body2">
-                  {formatMoney(server.revenue)}/s
-                </Typography>
-              </Box>
-              
-              {server.status === 'building' && (
-                <Box sx={{ width: '100%', mt: 1 }}>
-                  <LinearProgress 
-                    variant="determinate" 
-                    value={getBuildProgress(server)} 
-                  />
+        {servers.length === 0 ? (
+          <Typography variant="body2" sx={{ color: 'text.secondary', my: 2, textAlign: 'center' }}>
+            No servers built yet. Go to the Build tab to create your first server.
+          </Typography>
+        ) : (
+          <List sx={{ maxHeight: 400, overflow: 'auto' }}>
+            {servers.map((server) => (
+              <Paper key={server.id} sx={{ mb: 1, p: 1 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Typography variant="subtitle1">
+                    Server {server.id.slice(-4)}
+                  </Typography>
+                  {server.status === 'running' ? (
+                    <IconButton 
+                      size="small" 
+                      color="error" 
+                      onClick={() => shutdownServer(server.id)}
+                      title="Shutdown"
+                    >
+                      <PowerSettingsNewIcon fontSize="small" />
+                    </IconButton>
+                  ) : server.status === 'offline' ? (
+                    <IconButton 
+                      size="small" 
+                      color="success" 
+                      onClick={() => restartServer(server.id)}
+                      title="Start"
+                    >
+                      <PlayArrowIcon fontSize="small" />
+                    </IconButton>
+                  ) : (
+                    <CircularProgress size={20} />
+                  )}
                 </Box>
-              )}
-              
-              <Box sx={{ mt: 1 }}>
-                <Typography variant="caption" sx={{ display: 'block' }}>
-                  Components: {server.components.map(c => c.name).join(', ')}
-                </Typography>
-                <Typography variant="caption" sx={{ display: 'block' }}>
-                  Power Usage: {formatPower(server.powerUsage)}
-                </Typography>
-              </Box>
-            </Paper>
-          ))}
-        </List>
+                
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}>
+                  <Typography variant="body2">
+                    Status: 
+                    <Chip 
+                      label={server.status} 
+                      size="small" 
+                      color={
+                        server.status === 'running' ? 'success' : 
+                        server.status === 'building' ? 'warning' : 'error'
+                      }
+                      sx={{ ml: 1, height: 20, fontSize: '0.7rem' }}
+                    />
+                  </Typography>
+                  <Typography variant="body2">
+                    {formatMoney(server.revenue)}/s
+                  </Typography>
+                </Box>
+                
+                {server.status === 'building' && (
+                  <Box sx={{ width: '100%', mt: 1 }}>
+                    <LinearProgress 
+                      variant="determinate" 
+                      value={getBuildProgress(server)} 
+                    />
+                  </Box>
+                )}
+                
+                <Box sx={{ mt: 1 }}>
+                  <Typography variant="caption" sx={{ display: 'block' }}>
+                    Components: {server.components.map(c => c.name).join(', ')}
+                  </Typography>
+                  <Typography variant="caption" sx={{ display: 'block' }}>
+                    Power Usage: {formatPower(server.powerUsage)}
+                  </Typography>
+                </Box>
+              </Paper>
+            ))}
+          </List>
+        )}
       </TabPanel>
 
       <TabPanel value={tabValue} index={2}>
@@ -416,6 +500,17 @@ export default function ControlPanel() {
           ))}
         </Grid>
       </TabPanel>
+
+      <Snackbar 
+        open={snackbarOpen} 
+        autoHideDuration={3000} 
+        onClose={handleCloseSnackbar}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={handleCloseSnackbar} severity={snackbarSeverity} sx={{ width: '100%' }}>
+          {snackbarMessage}
+        </Alert>
+      </Snackbar>
     </Paper>
   );
 } 

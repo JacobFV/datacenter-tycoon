@@ -389,30 +389,26 @@ const useGameStore = create<GameState>((set, get) => ({
   },
 
   startBuildingServer: (components) => {
-    const totalCost = components.reduce((sum, comp) => sum + comp.cost, 0);
     const state = get();
     
-    if (state.money >= totalCost) {
-      // Calculate total power usage (considering PSU efficiency)
-      const psu = components.find(c => c.type === 'PSU');
-      const basePowerUsage = components.reduce((sum, comp) => sum + comp.powerUsage, 0);
-      const powerEfficiency = psu ? Math.abs(psu.powerUsage) / 100 : 0;
-      
-      const newServer: Server = {
-        id: `server-${Date.now()}`,
-        components,
-        status: 'building',
-        buildStartTime: Date.now(),
-        revenue: components.reduce((sum, comp) => sum + comp.performance, 0) * 0.1 * state.revenueMultiplier,
-        powerUsage: basePowerUsage * (1 - (powerEfficiency + state.powerEfficiencyMultiplier - 1)),
-        efficiency: powerEfficiency,
-      };
-      
-      set((state) => ({
-        servers: [...state.servers, newServer],
-        money: state.money - totalCost,
-      }));
-    }
+    // Calculate total power usage (considering PSU efficiency)
+    const psu = components.find(c => c.type === 'PSU');
+    const basePowerUsage = components.reduce((sum, comp) => sum + comp.powerUsage, 0);
+    const powerEfficiency = psu ? Math.abs(psu.powerUsage) / 100 : 0;
+    
+    const newServer: Server = {
+      id: `server-${Date.now()}`,
+      components,
+      status: 'building',
+      buildStartTime: Date.now(),
+      revenue: components.reduce((sum, comp) => sum + comp.performance, 0) * 0.1 * state.revenueMultiplier,
+      powerUsage: basePowerUsage * (1 - (powerEfficiency + state.powerEfficiencyMultiplier - 1)),
+      efficiency: powerEfficiency,
+    };
+    
+    set((state) => ({
+      servers: [...state.servers, newServer]
+    }));
   },
 
   purchaseUpgrade: (upgradeId) => {
