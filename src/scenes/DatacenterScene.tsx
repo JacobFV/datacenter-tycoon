@@ -310,6 +310,8 @@ function DatacenterRoomComponent({ room, position }: RoomProps) {
   };
   
   const roomColor = roomColors[room.type];
+  const lightColor = room.lighting.color;
+  const lightIntensity = room.lighting.intensity * 12; // Scale up for Three.js - increased from 10 to 12
   
   return (
     <group position={position}>
@@ -367,20 +369,33 @@ function DatacenterRoomComponent({ room, position }: RoomProps) {
         </Text>
       </group>
       
-      {/* Ceiling lights */}
-      {Array.from({ length: Math.ceil(room.size / 2) }).map((_, i) => (
+      {/* Main ceiling light */}
+      <pointLight 
+        position={[0, wallHeight - 0.5, 0]} 
+        intensity={lightIntensity} 
+        distance={roomSize * 1.5} 
+        decay={2}
+        color={lightColor}
+      />
+      
+      {/* Additional ceiling lights */}
+      {Array.from({ length: Math.ceil(room.size) }).map((_, i) => (
         <pointLight 
           key={`light-${room.id}-${i}`}
           position={[
-            (i - Math.floor(room.size / 4)) * 3, 
+            (i - Math.floor(room.size / 2)) * 3, 
             wallHeight - 0.5, 
-            0
+            (i % 2 === 0 ? 2 : -2)
           ]} 
-          intensity={10} 
+          intensity={lightIntensity * 0.6} 
           distance={roomSize} 
-          decay={2} 
+          decay={2}
+          color={lightColor}
         />
       ))}
+      
+      {/* Ambient light for the room */}
+      <ambientLight intensity={0.6} />
     </group>
   );
 }
@@ -401,16 +416,49 @@ function ServerRoom({ room }: { room: Room }) {
   
   return (
     <group>
-      {racks.map((rackServers, index) => {
-        const xPos = (index + 1) * rackSpacing - roomSize / 2;
-        return (
-          <ServerRack 
-            key={`rack-${index}-${room.id}`} 
-            position={[xPos, 0, 0]} 
-            servers={rackServers} 
-          />
-        );
-      })}
+      {/* If there are no servers, show empty racks */}
+      {servers.length === 0 ? (
+        <group>
+          {/* Display 2 empty server racks */}
+          <EmptyServerRack position={[-roomSize/4, 0, 0]} />
+          <EmptyServerRack position={[roomSize/4, 0, 0]} />
+        </group>
+      ) : (
+        // Otherwise show racks with servers
+        racks.map((rackServers, index) => {
+          const xPos = (index + 1) * rackSpacing - roomSize / 2;
+          return (
+            <ServerRack 
+              key={`rack-${index}-${room.id}`} 
+              position={[xPos, 0, 0]} 
+              servers={rackServers} 
+            />
+          );
+        })
+      )}
+    </group>
+  );
+}
+
+// New component for empty server racks
+function EmptyServerRack({ position }: { position: [number, number, number] }) {
+  return (
+    <group position={position}>
+      {/* Rack frame */}
+      <mesh position={[0, 1.5, 0]} castShadow>
+        <boxGeometry args={[1, 3, 0.8]} />
+        <meshStandardMaterial color="#333" />
+      </mesh>
+      
+      {/* Rack rails */}
+      <mesh position={[0.4, 1.5, 0]} castShadow>
+        <boxGeometry args={[0.05, 2.8, 0.7]} />
+        <meshStandardMaterial color="#555" />
+      </mesh>
+      <mesh position={[-0.4, 1.5, 0]} castShadow>
+        <boxGeometry args={[0.05, 2.8, 0.7]} />
+        <meshStandardMaterial color="#555" />
+      </mesh>
     </group>
   );
 }

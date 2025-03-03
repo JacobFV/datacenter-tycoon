@@ -25,6 +25,16 @@ export interface Room {
   cost: number;
   maxUnits: number;
   units: (Server | PC | Software)[];
+  airConditioning: {
+    level: number;
+    cost: number;
+    efficiency: number;
+  };
+  lighting: {
+    color: string;
+    intensity: number;
+    cost: number;
+  };
 }
 
 export interface Server {
@@ -94,34 +104,49 @@ interface GameState {
   purchaseComponent: (component: Component) => boolean;
   startBuildingServer: (components: Component[]) => void;
   startBuildingPC: (components: Component[]) => void;
-  startDevelopingSoftware: (name: string, type: Software['type'], developers: number) => void;
+  startDevelopingSoftware: (name: string, type: Software['type'], developers: number) => boolean;
   purchaseUpgrade: (upgradeId: string) => boolean;
   updateGameState: () => void;
   shutdownServer: (serverId: string) => void;
   restartServer: (serverId: string) => void;
   purchaseRoom: (type: RoomType, position: [number, number]) => boolean;
   setActiveRoom: (roomId: string | null) => void;
+  upgradeRoomAirConditioning: (roomId: string) => boolean;
+  upgradeRoomLighting: (roomId: string, color: string) => boolean;
 }
 
 // Define room types
-const roomTypes: Record<RoomType, { name: string, cost: number, maxUnits: number, size: number }> = {
+const roomTypes: Record<RoomType, { 
+  name: string, 
+  cost: number, 
+  maxUnits: number, 
+  size: number,
+  basePowerUsage: number,
+  airConditioningCost: number
+}> = {
   SERVER: { 
     name: 'Server Room', 
     cost: 5000, 
     maxUnits: 20,
-    size: 3
+    size: 3,
+    basePowerUsage: 200,
+    airConditioningCost: 500
   },
   PC: { 
     name: 'PC Lab', 
     cost: 3000, 
     maxUnits: 10,
-    size: 2
+    size: 2,
+    basePowerUsage: 100,
+    airConditioningCost: 300
   },
   SOFTWARE: { 
     name: 'Development Studio', 
     cost: 7000, 
     maxUnits: 5,
-    size: 4
+    size: 4,
+    basePowerUsage: 150,
+    airConditioningCost: 700
   }
 };
 
@@ -468,7 +493,17 @@ const useGameStore = create<GameState>((set, get) => ({
       size: roomTypes.SERVER.size,
       cost: roomTypes.SERVER.cost,
       maxUnits: roomTypes.SERVER.maxUnits,
-      units: []
+      units: [], // Start with empty racks
+      airConditioning: {
+        level: 1,
+        cost: roomTypes.SERVER.airConditioningCost,
+        efficiency: 0.1
+      },
+      lighting: {
+        color: '#4287f5', // Blue light for server rooms
+        intensity: 1.5,
+        cost: 200
+      }
     }
   ],
   availableComponents: componentCatalog.filter(comp => comp.tier === 1), // Start with tier 1 components
@@ -723,7 +758,17 @@ const useGameStore = create<GameState>((set, get) => ({
         size: roomInfo.size,
         cost: roomInfo.cost,
         maxUnits: roomInfo.maxUnits,
-        units: []
+        units: [],
+        airConditioning: {
+          level: 1,
+          cost: roomInfo.airConditioningCost,
+          efficiency: 0.1
+        },
+        lighting: {
+          color: type === 'SERVER' ? '#4287f5' : type === 'PC' ? '#42f59e' : '#f542cb',
+          intensity: 1.0,
+          cost: 200
+        }
       };
       
       set((state) => ({
@@ -824,6 +869,21 @@ const useGameStore = create<GameState>((set, get) => ({
     
     const totalRevenue = serverRevenue + pcRevenue + softwareRevenue;
 
+    // Calculate air conditioning costs
+    const airConditioningCosts = updatedRooms.reduce((sum, room) => {
+      // Base cost per room type plus cost per unit
+      const baseCost = roomTypes[room.type].basePowerUsage;
+      const unitCost = room.units.length * 10;
+      
+      // Apply air conditioning efficiency
+      const totalCost = (baseCost + unitCost) * (1 - room.airConditioning.efficiency);
+      
+      return sum + totalCost;
+    }, 0);
+
+    // Deduct air conditioning costs from revenue
+    const netRevenue = Math.max(0, totalRevenue - airConditioningCosts * timeDelta);
+
     // Update power usage
     const serverPower = allServers
       .filter(server => server.status === 'running')
@@ -837,7 +897,12 @@ const useGameStore = create<GameState>((set, get) => ({
       .filter(sw => sw.status === 'running')
       .reduce((sum, sw) => sum + sw.powerUsage, 0);
     
-    const totalPowerUsage = serverPower + pcPower + softwarePower;
+    // Add air conditioning power usage
+    const airConditioningPower = updatedRooms.reduce((sum, room) => {
+      return sum + roomTypes[room.type].basePowerUsage * room.airConditioning.level;
+    }, 0);
+    
+    const totalPowerUsage = serverPower + pcPower + softwarePower + airConditioningPower;
 
     // Check if power usage exceeds capacity and shut down units if needed
     if (totalPowerUsage > state.powerCapacity) {
@@ -895,11 +960,78 @@ const useGameStore = create<GameState>((set, get) => ({
       servers: allServers,
       pcs: allPCs,
       software: allSoftware,
-      money: state.money + totalRevenue,
+      money: state.money + netRevenue,
       powerUsage: Math.min(totalPowerUsage, state.powerCapacity),
       lastUpdate: currentTime,
       gameTime: newGameTime,
     });
+  },
+
+  // Add air conditioning upgrade function
+  upgradeRoomAirConditioning: (roomId: string) => {
+    const state = get();
+    const room = state.rooms.find(r => r.id === roomId);
+    
+    if (!room) return false;
+    
+    const upgradeCost = room.airConditioning.cost;
+    
+    if (state.money < upgradeCost) return false;
+    
+    const newLevel = room.airConditioning.level + 1;
+    const newEfficiency = Math.min(0.5, room.airConditioning.efficiency + 0.1);
+    const newCost = Math.round(room.airConditioning.cost * 1.5);
+    
+    set({
+      money: state.money - upgradeCost,
+      rooms: state.rooms.map(r => 
+        r.id === roomId 
+          ? { 
+              ...r, 
+              airConditioning: {
+                level: newLevel,
+                efficiency: newEfficiency,
+                cost: newCost
+              }
+            } 
+          : r
+      )
+    });
+    
+    return true;
+  },
+
+  // Add lighting upgrade function
+  upgradeRoomLighting: (roomId: string, color: string) => {
+    const state = get();
+    const room = state.rooms.find(r => r.id === roomId);
+    
+    if (!room) return false;
+    
+    const upgradeCost = room.lighting.cost;
+    
+    if (state.money < upgradeCost) return false;
+    
+    const newIntensity = Math.min(2.0, room.lighting.intensity + 0.2);
+    const newCost = Math.round(room.lighting.cost * 1.5);
+    
+    set({
+      money: state.money - upgradeCost,
+      rooms: state.rooms.map(r => 
+        r.id === roomId 
+          ? { 
+              ...r, 
+              lighting: {
+                color,
+                intensity: newIntensity,
+                cost: newCost
+              }
+            } 
+          : r
+      )
+    });
+    
+    return true;
   },
 }));
 
